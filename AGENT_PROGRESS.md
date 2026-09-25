@@ -18,6 +18,10 @@ Updated: 2026-09-24.
 
 ## History
 
+### 2026-09-25 — Stages 0–6 local backend implementation
+
+Implemented a runnable local backend under `backend/`: FastAPI routes, SQLite persistence, the canonical JSON SceneGraph, immutable scene-version snapshots, concise scene/project memory entries, Agent run records, and traces. The API accepts a text run, reads the current SceneGraph plus scoped memory, calls a two-logical-pass deterministic planner, validates its ScenePatch, persists the validated next SceneGraph, then returns the scene, plan, assumptions, and trace. Added Level 1 structural validation (operations, known ids, base version) and Level 2 spatial validation (bounds, positive dimensions, excessive overlap, valid light targets). Invalid agent patches retain the prior scene and record a fallback trace. Added backend API tests for a New York apartment/night/stars scenario, persisted trace retrieval, stale-version rejection, and invalid manual edit rejection. Added `docs/ARCHITECTURE.md` to distinguish SceneGraph from rendered image, ScenePatch from SceneGraph, trace fields from storage, Model Gateway from HTTP API, and current local storage from later cloud/object storage. The browser now attempts to connect to this backend first; text prompts and manual lighting/set movements sync through HTTP, while a visibly labelled local fallback remains available if the backend is not running. No hosted model, Qwen key, GPU runtime, image upload, or cloud deployment has been added.
+
 ### 2026-09-23 — Repository orientation and Stage 0 documentation
 
 Inspected CueSpace (`README.md`, initial Git state) and AMDEX (`AGENTS.md`, `PRD.md`, `README.md`, `AGENT_PROGRESS.md`, repository layout and commit history). CueSpace had only an initial README and initial commit. Added `AGENTS.md`, `PRD.md`, `docs/DESIGN.md`, and this progress log. Recorded the Stage 1 text-to-editable-2D/2.5D vertical slice, staged multimodal roadmap, SceneGraph/deterministic-renderer boundary, default/clarification policy, and future 3D migration path. No application implementation or runtime checks were performed.
@@ -65,3 +69,27 @@ Refined the lighting model after reviewing theatrical fixture/gobo references. A
 ### 2026-09-24 — Commit preparation
 
 Recorded the current Stage 1 implementation as the first complete reviewable demo snapshot. The repository is ready for a user-owned Git commit and optional push. Known limitation remains the Windows Vite `spawn EPERM` build issue; static browser verification and JavaScript syntax checks pass, and no external model/API key is required for the current demo.
+
+### 2026-09-24 — Future Agent, memory, harness, and model decisions
+
+Recorded the future architecture without expanding Stage 1 implementation. CueSpace will prefer one bounded Agent over multiple Agents. The conceptual memory scopes are User, Project, and Scene, while SceneGraph remains current editable state and Version History remains change history. Stage 1 only needs a small local memory record for confirmed preferences and notes. Defined model roles as optional and replaceable: core language model, reasoning model for difficult cases, vision model for image references, speech-to-text model for voice, and embedding model for larger retrieval. Defined the deterministic Agent harness as the surrounding schemas, memory policy, tool boundary, validator, patch application, renderer, persistence, retry/timeout/fallback logic, audit events, and evaluation fixtures. Documented that hosted, free-tier, and local/open-weight models are all compatible behind a ModelGateway, with local deployment carrying hardware, serving, licensing, latency, maintenance, and evaluation costs. None of these future integrations are implemented in Stage 1.
+
+### 2026-09-24 — Agent backbone and lightweight memory skeleton
+
+Added the first model-agnostic Agent backbone. The UI now calls `CueSpaceAgent`, which reads scoped lightweight memory, invokes a `ModelGateway`, validates the returned ScenePatch, records a bounded temporary scene note, and only then applies the patch to the SceneGraph. Added a deterministic gateway adapter around the existing planner, so a hosted, free-tier, or local open-weight model can later implement the same asynchronous `plan(request)` contract without moving model code into the UI. Added `src/agent/memory.js`, `src/agent/gateway.js`, and `src/agent/harness.js`. The UI now exposes the active Agent, gateway/model, memory scopes, and patch-validation status. Stage 1 still uses the deterministic gateway; no external model or automatic permanent user-preference writes were added. JavaScript syntax checks and `git diff --check` pass.
+
+### 2026-09-24 — Model evaluation direction
+
+Recorded a tentative open-weight evaluation shortlist: Qwen3 instruct variants, Mistral Small 3.1, and Gemma 3. The shortlist is not a final selection. CueSpace should begin with one core model that reliably produces structured ScenePatch proposals; a separate reasoning model is deferred until measured failures justify it. Evaluation will focus on patch validity, preservation of user edits, ambiguity handling, memory scope isolation, latency, hardware requirements, and cost rather than image-generation quality. Official model documentation was reviewed for tool/function-calling and multimodal capability; project-specific tests remain required.
+
+### 2026-09-24 — Harness policy, observability, and evaluation skeleton
+
+Added explicit runtime policy and measurement scaffolding. The Agent now supports a bounded turn count and clarification count, model timeout handling, optional deterministic fallback gateway, cloned model inputs, patch base-version conflict rejection, trace IDs, fallback/latency metadata, and bounded local telemetry in `src/agent/observability.js`. Added repeatable smoke cases and aggregate metrics in `src/agent/evaluation.js` for patch validity, expected behavior, pass rate, and duration. This is operational observability and contract evaluation, not chain-of-thought logging. Qwen remains a viable core-model candidate, but no real model has been selected or connected yet.
+
+### 2026-09-24 — Two-role planning backbone
+
+Added the `DesignPlan` intermediate layer and a two-pass gateway boundary. The initial recommendation is one Qwen model used in two logical roles: Core for input observation/intent and Reasoning for spatial consolidation. The current deterministic gateway simulates both roles and returns layout, spatial relations, lighting plan, constraints, and proposed operation count before the existing ScenePatch validation. The gateway records `modelRoles` and `modelCount`, making a future split into separate core and reasoning models a replaceable routing decision. No second model is deployed yet.
+
+### 2026-09-24 — Spatial validation and deployment placeholder
+
+Added the first deterministic spatial validation layer in `src/agent/spatial-validator.js`. The harness now checks movable-object stage bounds, excessive overlap, and light target existence before accepting a ScenePatch. Structural stage elements are excluded from generic blocking-overlap checks. Clarified in the design record that SceneGraph is structured canonical state and renderer output/export is separate. Added `docs/DEPLOYMENT.md` with local SQLite/FastAPI and future cloud PostgreSQL/object-storage placeholders. Simplified the Stage 1 evaluation strategy to contract tests, a small scenario fixture set, and human spot checks.

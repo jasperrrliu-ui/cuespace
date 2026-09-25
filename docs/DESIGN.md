@@ -1,6 +1,6 @@
 # CueSpace design record
 
-Status: Stage 1 — minimal demo implementation in progress. The first vertical slice is local, deterministic, and mock-backed.
+Status: Stage 1 — minimal demo implementation in progress. The first vertical slice is local, deterministic, and mock-backed; the model-agnostic Agent backbone and lightweight memory skeleton are now present.
 
 ## 1. Confirmed product direction
 
@@ -128,3 +128,157 @@ The lighting model now separates:
 This is based on the design distinction between fixture output, color, beam shaping, and gobo projection. CueSpace remains a 2D/2.5D visual approximation: it does not claim physical inverse-square lighting, DMX control, fixture photometry, or optical accuracy.
 
 The planner now treats a strong red practical as a motivated local source, keeps a neutral key for furniture readability, and adds a low-level star gobo behind a window when the request implies night, moonlight, or stars. The user can still override every light manually.
+
+## 16. Memory architecture: future design, not Stage 1 scope
+
+CueSpace should support memory, but the first implementation should remain small. The conceptual scopes are:
+
+```text
+User Memory
+  -> Project Memory
+      -> Scene Memory
+          -> SceneGraph + Version History
+```
+
+These scopes are intentionally different:
+
+- **User Memory** stores confirmed, cross-project preferences such as realism, acceptable color treatment, accessibility needs, and interaction style.
+- **Project Memory** stores a project's goal, constraints, vocabulary, and confirmed design direction.
+- **Scene Memory** stores the interpretation and unresolved design questions for one scene.
+- **SceneGraph** stores the current editable state; it is not memory.
+- **Version History** stores how the SceneGraph changed; it is not the Agent's long-term memory.
+
+Stage 1 may use one local `memory` record containing confirmed preferences and notes. It does not need accounts, a memory service, vector storage, or a full project-management UI. The scope fields can be reserved in the data shape and implemented only when a real cross-project use case appears.
+
+The Agent must not silently promote a temporary observation into a permanent user preference. Memory entries should carry scope, provenance, confidence, and status such as `temporary`, `inferred`, or `confirmed`. Cross-project preferences should normally require explicit user confirmation. Do not store private uploads, sensitive personal information, or hidden chain-of-thought.
+
+## 17. Agent and model roles
+
+CueSpace does not need multiple Agents for the initial product. One bounded design Agent can read scoped memory, interpret the request, retrieve guidance, propose a `ScenePatch`, explain assumptions, and decide whether to ask one focused question. Deterministic tools remain responsible for validation, patch application, rendering, persistence, and versioning.
+
+The terms below describe replaceable model roles, not mandatory separate models:
+
+- **Core model / primary model:** the normal language model that interprets user input, uses memory, and produces structured intent or a patch proposal.
+- **Reasoning model:** an optional slower or stronger model used only for difficult ambiguity, conflict resolution, or multi-step lighting/composition planning. The core model can perform this role in Stage 2.
+- **Vision model:** an optional image-capable model for Stage 2 reference-image observations. Its output is an observation with uncertainty, not direct geometry.
+- **Speech-to-text model:** an optional Stage 3 input adapter. Its transcript feeds the same text intent path.
+- **Embedding model:** an optional retrieval component for a larger knowledge base. It is not required for the small curated `src/knowledge.js` guidance module.
+
+The first model-backed implementation should use one model through a `ModelGateway` interface. A second reasoning model is justified only if evaluations show that the primary model cannot reliably handle the relevant cases.
+
+## 18. Agent harness boundary
+
+The Agent harness is the deterministic system around a model. It includes:
+
+- input normalization and conversation state;
+- scoped memory read/write policy;
+- prompt or request construction;
+- structured output schemas for `DesignIntent` and `ScenePatch`;
+- tool definitions and permission boundaries;
+- schema validation and patch validation;
+- clarification limits and stop conditions;
+- retries, timeouts, fallbacks, and model routing;
+- deterministic SceneGraph mutation and rendering;
+- version snapshots, audit events, and user-visible explanations;
+- regression fixtures and evaluation checks.
+
+The model is only one component inside this harness. The renderer, SceneGraph, patch validator, version store, and UI are not Agents, even though the Agent can call them as tools. The current deterministic planner is a harness-compatible mock for the future model gateway.
+
+## 19. Model deployment decision
+
+The product should not depend on a particular model vendor. The planned boundary is:
+
+```text
+CueSpace Agent
+  -> ModelGateway
+      -> hosted commercial model
+      -> free-tier API model
+      -> local or self-hosted open-weight model
+```
+
+Open-weight or locally deployed models are technically viable, especially for text intent parsing and structured patch proposals. They may reduce per-call API cost and improve privacy, but they add hardware, setup, latency, model-serving, upgrade, and evaluation costs. "Free" therefore means no per-token vendor bill in some configurations, not zero operational cost.
+
+Model selection must also check license terms, structured-output reliability, context length, tool-calling support, vision support when needed, and whether the hardware can run the model at acceptable latency. Stage 1 remains model-free. Stage 2 can begin with one replaceable hosted or local model, while the deterministic planner remains the fallback and regression oracle.
+
+## 20. Implemented Agent backbone
+
+The current code now contains the first harness skeleton:
+
+```text
+UI
+  -> CueSpaceAgent
+      -> scoped local MemoryStore
+      -> ModelGateway
+          -> deterministic planner (current adapter)
+      -> ScenePatch validation
+      -> SceneGraph application (UI-owned deterministic code)
+      -> bounded scene note
+```
+
+`src/agent/harness.js` owns the Agent boundary and patch validation. `src/agent/gateway.js` owns the replaceable model contract. `src/agent/memory.js` owns a small local memory record with User, Project, and Scene-shaped scopes. The current memory writer records temporary scene notes only; permanent user preferences require an explicit confirmation path that is reserved but not exposed in the Stage 1 UI.
+
+## 21. Initial model evaluation direction
+
+The model is not selected yet. The backbone is intentionally implemented first so candidates can be evaluated against the same request and patch contract. For CueSpace, the first model must be an instruction-following model with reliable structured output or tool/function calling; raw image quality is not the primary criterion because the renderer is deterministic.
+
+The initial open-weight shortlist for evaluation is:
+
+- **Qwen3 instruct variants** for text planning and tool/function calling;
+- **Mistral Small 3.1** for a compact model with function calling and a future path to image understanding;
+- **Gemma 3** for a lightweight multimodal path when reference-image input becomes active.
+
+These are candidates, not a final decision. Their official materials document tool/function calling or multimodal capability, but CueSpace still needs its own patch-validity, ambiguity, latency, and hardware tests. A hosted model or free-tier model can be tested through the same gateway.
+
+The first deployment recommendation is one **core model** only. A separate **reasoning model** should be added only if evaluation shows that the core model cannot reliably resolve ambiguous scene intent, lighting conflicts, or memory conflicts. The harness should first try schema validation, a bounded repair retry, and the deterministic planner fallback. This keeps model count and operating cost small while preserving a path to a stronger reasoning route.
+
+Evaluation cases should include: ordinary New York apartment interpretation, localized red practical versus global red wash, window light plus star gobo, user edits that must survive a natural-language revision, a deliberately ambiguous prompt, and an invalid patch. Metrics should include valid-patch rate, preservation of unrelated edits, clarification quality, latency, memory leakage across scopes, and local deployment cost.
+
+## 22. Harness policy, observability, and evaluation
+
+The initial harness policy is explicit and bounded:
+
+- `maxTurns: 1` for the current single-pass Agent;
+- `maxClarifications: 1` for a future model-backed clarification flow;
+- `timeoutMs: 8000` for a model call;
+- a deterministic fallback may be called when the primary gateway fails;
+- the model receives cloned scene and memory data, not storage handles;
+- the model cannot call `localStorage`, mutate the live SceneGraph, or bypass patch validation;
+- patch base-version conflicts are rejected;
+- the harness records trace ID, gateway/model, validation result, fallback use, duration, and policy limits.
+
+`src/agent/observability.js` stores a bounded local trace buffer for the demo. It records operational metadata and outcomes, not hidden chain-of-thought. `src/agent/evaluation.js` provides repeatable cases and reports pass rate, valid-patch rate, average duration, and per-case checks. A conforming Agent must be evaluated on both happy paths and failure paths, including invalid output, timeout, ambiguous requests, memory-scope leakage, and preservation of direct user edits.
+
+Observability answers "what happened?" Evaluation answers "did it satisfy the product contract?" Neither is replaced by a good-looking rendered image.
+
+## 23. Core and reasoning roles
+
+CueSpace now reserves two logical passes while keeping the first deployment to one model:
+
+```text
+one Qwen model (initial target)
+  -> Core pass: text/image observation and DesignIntent
+  -> Reasoning pass: spatial consolidation and DesignPlan
+  -> deterministic validation and ScenePatch
+```
+
+The two passes are roles, not necessarily two different model instances. The current local gateway simulates this boundary and returns a `DesignPlan` containing layout, spatial relations, lighting plan, constraints, and proposed operation count. It does not yet claim physical 3D simulation. Spatial validity remains the responsibility of deterministic validators and the renderer.
+
+This one-model/two-role approach is the initial Qwen deployment recommendation. A separate reasoning model can later be routed behind the same gateway if benchmark results show that the core model cannot reliably consolidate spatial relationships, actor clearance, lighting motivation, or conflicting constraints.
+
+## 24. SceneGraph and spatial validation
+
+The SceneGraph is structured canonical state, not a rendered image. It stores objects, lights, transforms, layers, styles, and selected relations. The renderer reads the SceneGraph and produces a transient 2D/2.5D view; an exported PNG or other file is a separate artifact created only when requested.
+
+CueSpace does not need a general-purpose knowledge graph for Stage 1. A SceneGraph is a domain-specific spatial graph: objects are nodes and relations such as `in_front_of`, `faces`, `on`, `blocks`, and `lit_by` are controlled edges. Independent object fields remain simple, while relations capture the limited dependencies that matter to composition and staging.
+
+The current harness now performs a first deterministic spatial validation pass. It checks movable-object bounds, excessive object overlap, and light target existence. Structural objects such as walls, floors, scrims, curtains, and rugs are treated differently from movable blocking objects. Future checks can add actor clearance, entrances/exits, sightlines, support/attachment rules, and intentional overlap declarations.
+
+## 25. Minimal evaluation strategy
+
+Stage 1 evaluation should be small and strict rather than a large academic benchmark. Use three layers:
+
+1. **Contract tests:** valid JSON, allowed operations, valid IDs, valid ScenePatch, valid spatial state.
+2. **Scenario tests:** a small fixture set such as `red chair + gray modern apartment`, `night window + stars`, `localized red practical`, and `preserve a manually moved object`.
+3. **Human spot checks:** judge whether the resulting scene communicates the requested style, layout, and lighting without requiring pixel-level similarity.
+
+For each scenario, score required entities/attributes, style/environment realization, spatial validity, preservation of user edits, and clarification/default behavior. Exact coordinates are not required unless the user specified them. A model can pass if it produces a different but valid layout that satisfies the request.

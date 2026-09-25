@@ -42,7 +42,7 @@ Stage 1 is a stable, demonstrable vertical slice:
 - a small synthetic/demo asset set;
 - README, architecture documentation, tests, and a concise demo path.
 
-Current implementation status: the first local vertical slice includes text input, a structured scene state, SVG-based deterministic rendering, draggable set pieces, lighting controls, local version snapshots, and a deterministic mock planner. External model, image, and voice integrations remain future stages.
+Current implementation status: the first local vertical slice includes text input, a structured scene state, SVG-based deterministic rendering, draggable set pieces, lighting controls, local version snapshots, a deterministic mock planner, and a model-agnostic Agent backbone with lightweight local memory. External model, image, and voice integrations remain future stages.
 
 The current Stage 1 polish also includes best-effort interpretation of setting/style/palette/lifestyle language, a compact apartment scene variant, visible planner assumptions, and a five-light local rig with independent controls.
 
@@ -69,6 +69,24 @@ The first implementation uses one design-planning agent or a mock with the same 
 
 Rendering, coordinate updates, validation, persistence, undo/redo, and versioning remain deterministic application code.
 
+### Future Agent and memory direction
+
+CueSpace will eventually use one bounded Agent with scoped memory rather than several autonomous Agents. The conceptual memory scopes are User, Project, and Scene, but Stage 1 only needs a small local memory record for confirmed preferences and notes. SceneGraph remains the current state, and Version History remains the change history; neither should be conflated with long-term memory.
+
+The Agent may use a core language model, an optional reasoning model for difficult cases, a vision model for image references, a speech-to-text model for voice, and an embedding model for larger retrieval. These are optional model roles, not required separate Agents. All model output must pass through the harness: structured schemas, scoped memory policy, patch validation, deterministic mutation, rendering, persistence, and evaluation checks.
+
+The model provider is replaceable. Hosted APIs, free-tier services, and local/self-hosted open-weight models are all compatible behind a `ModelGateway`. Local or open-weight deployment can reduce API spending and improve privacy, but still has hardware, serving, maintenance, licensing, latency, and evaluation costs.
+
+The initial model evaluation should compare open-weight instruct candidates such as Qwen3, Mistral Small 3.1, and Gemma 3 against CueSpace-specific structured-patch tests. These are not locked choices. Start with one core model; add a separate reasoning model only after measured failures justify its cost and complexity.
+
+The Agent harness must also enforce bounded execution: one turn initially, at most one clarification, a model timeout, deterministic fallback, no model access to browser storage or the live SceneGraph, patch version-conflict checks, bounded traces, and explicit cost/latency metadata. Evaluation must report valid-patch rate, preservation of direct edits, expectation pass rate, clarification quality, memory-scope isolation, fallback rate, latency, and local operating cost.
+
+The initial model role design uses one Qwen model in two logical passes: a Core pass for input observation and `DesignIntent`, followed by a Reasoning pass for spatial consolidation and `DesignPlan`. A separate reasoning model is deferred until evaluation demonstrates that one model cannot meet the spatial-planning contract.
+
+The Stage 1 backend plan uses FastAPI, SQLite, and a ModelGateway. The first implementation may remain local; cloud deployment is a future placeholder. Uploaded reference images and exported renders are file/object artifacts, while SceneGraph, versions, memory metadata, and Agent run metadata remain structured database records.
+
+Spatial validation is part of the current harness scope. Initial checks cover stage bounds, excessive overlap, valid light targets, and patch/version safety. More advanced checks such as actor clearance, sightlines, entrances/exits, and support relationships are future extensions.
+
 ## 9. Roadmap
 
 ### Stage 0 — Foundation and confirmed design
@@ -94,6 +112,8 @@ Rendering, coordinate updates, validation, persistence, undo/redo, and versionin
 - Produce `ImageObservation` with confidence and uncertainty.
 - Convert observations into `DesignIntent` without treating them as exact geometry.
 - Add upload validation, failure states, and image privacy/retention policy.
+- Introduce one replaceable `ModelGateway` for intent interpretation while retaining the deterministic planner as fallback.
+- Add a minimal confirmed-preference memory record; defer full multi-project memory infrastructure.
 
 ### Stage 3 — Voice and learning assistance
 

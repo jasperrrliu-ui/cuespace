@@ -15,6 +15,7 @@ The canonical state will be a structured editable `SceneGraph`, not a generated 
 - [PRD.md](PRD.md) — product scope, staged roadmap, boundaries, and acceptance criteria.
 - [AGENTS.md](AGENTS.md) — working conventions for implementation and handoff.
 - [docs/DESIGN.md](docs/DESIGN.md) — confirmed and pending architecture decisions.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — implemented request flow, storage, validation, and model boundary.
 - [AGENT_PROGRESS.md](AGENT_PROGRESS.md) — chronological implementation and design log.
 
 ## Planned roadmap
@@ -25,7 +26,7 @@ The canonical state will be a structured editable `SceneGraph`, not a generated 
 4. **Stage 3 — Voice and learning assistance:** speech-to-text and curated stage-design guidance.
 5. **Stage 4 — Controlled 3D migration:** add depth and limited 3D rendering while preserving the core SceneGraph and workflow.
 
-## Run locally
+## Run the deterministic UI only
 
 Prerequisites: Node.js 20+ and npm.
 
@@ -49,3 +50,14 @@ npm run build
 ```
 
 The mock planner supports a small, explicit vocabulary for the demo, including warm/cool/blue lighting, bright/dim lighting, suspense/mystery mood, and moving the table left/right/center. Unsupported language is kept safe and visible as a planner note rather than silently changing the scene.
+
+## Run the local backend (Stages 0–6)
+
+The backend makes scene versions, lightweight scene memory, traces, and validation persistent in local SQLite. It still uses a deterministic two-pass planner; it does **not** call Qwen or any hosted API yet.
+
+```powershell
+.\.venv39\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv39\Scripts\python.exe -m uvicorn backend.app.main:app --reload --port 8000
+```
+
+In a second terminal, serve the UI at port 4173. It will display `FastAPI + SQLite connected` when the backend is available. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the exact data flow and what each stored record means.

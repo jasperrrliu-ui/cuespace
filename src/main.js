@@ -1,6 +1,11 @@
 import { createDefaultScene, cloneScene, applyPatch } from './scene.js?v=lighting-model-3';
 import { renderScene } from './renderer.js?v=lighting-model-3';
 import { planFromText } from './planner.js?v=lighting-model-3';
+import { createCueSpaceAgent } from './agent/harness.js?v=agent-backbone-1';
+import { createTwoPassDeterministicGateway } from './agent/gateway.js?v=agent-backbone-2';
+import { createMemoryStore } from './agent/memory.js?v=agent-backbone-1';
+import { createAgentTelemetry } from './agent/observability.js?v=agent-backbone-1';
+import { connectBackend, runAgent, saveSnapshot, saveScene } from './backend.js?v=backend-2';
 
 const STORAGE_KEY = 'cuespace-scene-v1';
 const VERSION_KEY = 'cuespace-versions-v1';
@@ -10,11 +15,11 @@ app.innerHTML = `
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">Stage 1 demo / deterministic mock planner</p>
+          <p class="eyebrow">Stage 1 demo / agent backbone</p>
         <h1>CueSpace</h1>
         <p class="subtitle">Explore a stage idea, then shape the light yourself.</p>
       </div>
-      <div class="status"><span class="status-dot"></span>Local prototype</div>
+        <div class="status" id="connection-status"><span class="status-dot"></span>Connecting backend…</div>
     </header>
 
     <section class="workspace">
@@ -28,8 +33,9 @@ app.innerHTML = `
         </div>
         <textarea id="prompt" placeholder="No special format needed. Mention the place, people or lifestyle, objects, palette, light, and what to avoid.">A small black-box stage with an old wooden table, a back scrim, and a quiet moonlit mood.</textarea>
         <button class="primary" id="apply-prompt">Update stage</button>
-        <p class="helper">This demo uses a deterministic local planner. It does not call an external model yet.</p>
+        <p class="helper">Agent backbone is active. The current gateway is a deterministic local fallback; a model can be added without changing the SceneGraph contract.</p>
         <div class="assumptions" id="assumptions"></div>
+        <div class="agent-meta" id="agent-meta"></div>
         <div class="intent-summary" id="intent-summary"></div>
       </aside>
 
@@ -87,10 +93,21 @@ app.innerHTML = `
 let scene = normalizeScene(loadScene() ?? createDefaultScene());
 let versions = loadVersions();
 let selectedObjectId = null;
+let backendSceneId = null;
+let manualSyncTimer = null;
+const memoryStore = createMemoryStore();
+const telemetry = createAgentTelemetry();
+const agent = createCueSpaceAgent({
+  gateway: createTwoPassDeterministicGateway({ planner: planFromText }),
+  memoryStore,
+  telemetry,
+  policy: { maxTurns: 1, maxClarifications: 1, timeoutMs: 8000 }
+});
 
 const stageWrap = document.querySelector('#stage-wrap');
 const prompt = document.querySelector('#prompt');
 const assumptions = document.querySelector('#assumptions');
+const agentMeta = document.querySelector('#agent-meta');
 const intentSummary = document.querySelector('#intent-summary');
 const sceneSummary = document.querySelector('#scene-summary');
 const selectedSummary = document.querySelector('#selected-summary');
@@ -159,12 +176,25 @@ function renderIntent(intent) {
   intentSummary.innerHTML = `<div class="intent-title">Planner interpretation</div>
     <div class="intent-grid">
       <span><small>Setting</small>${intent.setting}</span>
-      <span><small>Style</small>${intent.style}</span>
+      <span><small>Style</small>${intent.style ?? intent.mood ?? 'not specified'}</span>
       <span><small>Palette</small>${intent.palette}</span>
-      <span><small>Life signal</small>${intent.lifestyle}</span>
+      <span><small>Light</small>${intent.lifestyle ?? intent.lightingCue ?? 'not specified'}</span>
     </div>
-    <div class="intent-objects"><small>Scene candidates</small>${intent.objects.join(' · ')}</div>
-    <div class="intent-question"><small>Possible follow-up</small>${intent.questions[0]}</div>`;
+    <div class="intent-objects"><small>Scene candidates</small>${(intent.objects ?? []).join(' · ') || 'derived by the reasoning pass'}</div>
+    <div class="intent-question"><small>Possible follow-up</small>${intent.questions?.[0] ?? 'Refine focus, palette, or lighting in the controls.'}</div>`;
+}
+
+function queueManualSync() {
+  if (!backendSceneId) return;
+  clearTimeout(manualSyncTimer);
+  const expectedVersion = scene.version - 1;
+  manualSyncTimer = setTimeout(async () => {
+    try {
+      await saveScene(backendSceneId, scene, expectedVersion, 'Manual stage or lighting edit');
+    } catch (error) {
+      document.querySelector('#connection-status').innerHTML = '<span class="status-dot"></span>Sync paused · refresh or retry after a version conflict';
+    }
+  }, 350);
 }
 
 function bindStageEvents() {
@@ -191,6 +221,7 @@ function bindStageEvents() {
       if (drag) scene.version += 1;
       drag = null;
       refresh();
+      queueManualSync();
     });
   });
 }
@@ -219,12 +250,22 @@ function renderVersions() {
   });
 }
 
-document.querySelector('#apply-prompt').addEventListener('click', () => {
-  const result = planFromText(prompt.value, scene);
-  scene = applyPatch(scene, result.patch);
+document.querySelector('#apply-prompt').addEventListener('click', async () => {
+  let result;
+  try {
+    if (!backendSceneId) throw new Error('Backend unavailable');
+    result = await runAgent(backendSceneId, prompt.value, scene.version);
+    scene = result.scene;
+  } catch (error) {
+    result = await agent.run({ input: prompt.value, scene });
+    scene = applyPatch(scene, result.patch);
+    document.querySelector('#connection-status').innerHTML = '<span class="status-dot"></span>Local fallback · backend unavailable';
+  }
   assumptions.innerHTML = result.assumptions.length
     ? `<strong>Planner notes</strong>${result.assumptions.map((item) => `<span>${item}</span>`).join('')}`
     : '<span>Applied as an incremental update to the current scene.</span>';
+  const validated = result.trace.patchValidated ?? result.trace.validation?.passed;
+  agentMeta.textContent = `${result.trace.agent ?? result.trace.gateway} · ${result.trace.model} · patch validated: ${validated ? 'yes' : 'no'}`;
   renderIntent(result.intent);
   refresh();
 });
@@ -247,6 +288,7 @@ document.querySelector('#save-version').addEventListener('click', () => {
   versions = versions.slice(0, 8);
   persist();
   renderVersions();
+  if (backendSceneId) saveSnapshot(backendSceneId, `Version ${versions.length}`).catch(() => {});
 });
 
 lightSelect.addEventListener('change', refreshLightControls);
@@ -256,6 +298,7 @@ lightColor.addEventListener('input', () => {
   light.color = lightColor.value;
   scene.version += 1;
   refresh();
+  queueManualSync();
 });
 lightIntensity.addEventListener('input', () => {
   const light = scene.lights.find((item) => item.id === lightSelect.value);
@@ -263,6 +306,7 @@ lightIntensity.addEventListener('input', () => {
   light.intensity = Number(lightIntensity.value);
   scene.version += 1;
   refresh();
+  queueManualSync();
 });
 lightColorMix.addEventListener('input', () => {
   const light = scene.lights.find((item) => item.id === lightSelect.value);
@@ -270,6 +314,7 @@ lightColorMix.addEventListener('input', () => {
   light.colorMix = Number(lightColorMix.value);
   scene.version += 1;
   refresh();
+  queueManualSync();
 });
 lightSoftness.addEventListener('input', () => {
   const light = scene.lights.find((item) => item.id === lightSelect.value);
@@ -277,6 +322,7 @@ lightSoftness.addEventListener('input', () => {
   light.softness = Number(lightSoftness.value);
   scene.version += 1;
   refresh();
+  queueManualSync();
 });
 lightGobo.addEventListener('change', () => {
   const light = scene.lights.find((item) => item.id === lightSelect.value);
@@ -284,6 +330,7 @@ lightGobo.addEventListener('change', () => {
   light.gobo = lightGobo.value;
   scene.version += 1;
   refresh();
+  queueManualSync();
 });
 lightTarget.addEventListener('change', () => {
   const light = scene.lights.find((item) => item.id === lightSelect.value);
@@ -291,6 +338,7 @@ lightTarget.addEventListener('change', () => {
   light.targetIds = lightTarget.value ? [lightTarget.value] : [];
   scene.version += 1;
   refresh();
+  queueManualSync();
 });
 
 function loadScene() {
@@ -326,3 +374,12 @@ function loadVersions() {
 }
 
 refresh();
+
+connectBackend().then((record) => {
+  backendSceneId = record.scene.sceneId;
+  scene = normalizeScene(record.scene);
+  document.querySelector('#connection-status').innerHTML = '<span class="status-dot"></span>FastAPI + SQLite connected';
+  refresh();
+}).catch(() => {
+  document.querySelector('#connection-status').innerHTML = '<span class="status-dot"></span>Local fallback · start backend to persist';
+});

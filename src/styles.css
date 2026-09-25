@@ -40,6 +40,7 @@ textarea:focus { border-color: #758bff; box-shadow: 0 0 0 3px rgba(117,139,255,.
 .divider { height: 1px; margin: 22px 0; background: #2b3240; }
 .assumptions { display: grid; gap: 7px; margin-top: 14px; color: #9faabd; font-size: 11px; line-height: 1.4; }
 .assumptions strong { color: #dce2ef; font-size: 11px; }
+.agent-meta { color: #8894b4; font-size: 0.72rem; line-height: 1.5; margin-top: 0.65rem; }
 .intent-summary { display: grid; gap: 10px; margin-top: 16px; padding: 13px; border: 1px solid #30394c; border-radius: 12px; color: #bac4d6; background: rgba(31, 39, 61, .42); font-size: 11px; line-height: 1.45; }
 .intent-title { color: #e4e8f4; font-weight: 750; }
 .intent-empty { color: #7f8ba1; }
